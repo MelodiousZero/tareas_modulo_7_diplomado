@@ -4,9 +4,13 @@ Una colección centralizada de todas mis tareas académicas, proyectos y trabajo
 
 ##  Estructura del Repositorio
 tareas_modulo_7_diplomado/
+
 ├── tareas/
-├── 📂 tarea_1/
-├── 📂 tarea_2/
+
+├── tarea_1/
+
+├── tarea_2/
+
 └── README.md
 
 ##  Organización
