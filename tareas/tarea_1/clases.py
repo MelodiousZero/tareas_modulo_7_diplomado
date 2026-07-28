@@ -13,6 +13,10 @@ from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
+
+SEMILLA = 42
+np.random.seed(SEMILLA)
+
 class LogsisticRegressionSGD:
     """Regresión Logística con SGD estándar"""
     
@@ -190,3 +194,114 @@ class LogisticRegressionAdaGrad:
         """Predecir probabilidades"""
         logits = X @ self.weights
         return self.softmax(logits)
+
+
+class MLP:
+    """Red multicapa 8 -> 64 -> 32 -> 1 (ReLU, salida lineal) con pérdida MSE."""
+
+    def __init__(self, n_entradas, n_oculta1=64, n_oculta2=32, semilla=SEMILLA):
+        rng = np.random.default_rng(semilla)
+        # Inicialización de He: N(0, sqrt(2 / n_entradas_de_la_capa))
+        self.params = {
+            'W1': rng.normal(0, np.sqrt(2 / n_entradas), (n_entradas, n_oculta1)),
+            'b1': np.zeros(n_oculta1),
+            'W2': rng.normal(0, np.sqrt(2 / n_oculta1), (n_oculta1, n_oculta2)),
+            'b2': np.zeros(n_oculta2),
+            'W3': rng.normal(0, np.sqrt(2 / n_oculta2), (n_oculta2, 1)),
+            'b3': np.zeros(1),
+        }
+
+    def forward(self, X):
+        p = self.params
+        self.X = X
+        self.Z1 = X @ p['W1'] + p['b1']
+        self.A1 = np.maximum(0, self.Z1)          # ReLU
+        self.Z2 = self.A1 @ p['W2'] + p['b2']
+        self.A2 = np.maximum(0, self.Z2)          # ReLU
+        self.salida = (self.A2 @ p['W3'] + p['b3']).ravel()
+        return self.salida
+
+    def backward(self, y):
+        """Gradiente de la pérdida MSE respecto de cada parámetro (retropropagación)."""
+        p = self.params
+        m = len(y)
+        grads = {}
+        d_salida = (2.0 / m) * (self.salida - y)[:, None]     # dL/d(salida)
+        grads['W3'] = self.A2.T @ d_salida
+        grads['b3'] = d_salida.sum(axis=0)
+        dA2 = d_salida @ p['W3'].T
+        dZ2 = dA2 * (self.Z2 > 0)                             # derivada de ReLU
+        grads['W2'] = self.A1.T @ dZ2
+        grads['b2'] = dZ2.sum(axis=0)
+        dA1 = dZ2 @ p['W2'].T
+        dZ1 = dA1 * (self.Z1 > 0)
+        grads['W1'] = self.X.T @ dZ1
+        grads['b1'] = dZ1.sum(axis=0)
+        return grads
+
+    def perdida(self, X, y):
+        return np.mean((self.forward(X) - y) ** 2)
+
+
+class SGD:
+    def __init__(self, lr=0.01):
+        self.lr = lr
+    def update(self, params, grads):
+        for k in params:
+            params[k] -= self.lr * grads[k]
+
+
+class SGDMomentum:
+    def __init__(self, lr=0.01, beta=0.9):
+        self.lr, self.beta, self.v = lr, beta, {}
+    def update(self, params, grads):
+        for k in params:
+            self.v[k] = self.beta * self.v.get(k, 0.0) + grads[k]
+            params[k] -= self.lr * self.v[k]
+
+
+class AdaGrad:
+    def __init__(self, lr=0.05, epsilon=1e-8):
+        self.lr, self.epsilon, self.G = lr, epsilon, {}
+    def update(self, params, grads):
+        for k in params:
+            self.G[k] = self.G.get(k, 0.0) + grads[k] ** 2
+            params[k] -= self.lr * grads[k] / (np.sqrt(self.G[k]) + self.epsilon)
+
+
+class RMSProp:
+    def __init__(self, lr=0.005, rho=0.9, epsilon=1e-8):
+        self.lr, self.rho, self.epsilon, self.G = lr, rho, epsilon, {}
+    def update(self, params, grads):
+        for k in params:
+            self.G[k] = self.rho * self.G.get(k, 0.0) + (1 - self.rho) * grads[k] ** 2
+            params[k] -= self.lr * grads[k] / (np.sqrt(self.G[k]) + self.epsilon)
+
+
+class Adam:
+    def __init__(self, lr=0.005, rho1=0.9, rho2=0.999, epsilon=1e-8):
+        self.lr, self.rho1, self.rho2, self.epsilon = lr, rho1, rho2, epsilon
+        self.m, self.v, self.t = {}, {}, 0
+    def update(self, params, grads):
+        self.t += 1
+        for k in params:
+            self.m[k] = self.rho1 * self.m.get(k, 0.0) + (1 - self.rho1) * grads[k]
+            self.v[k] = self.rho2 * self.v.get(k, 0.0) + (1 - self.rho2) * grads[k] ** 2
+            m_hat = self.m[k] / (1 - self.rho1 ** self.t)   # corrección de sesgo
+            v_hat = self.v[k] / (1 - self.rho2 ** self.t)
+            params[k] -= self.lr * m_hat / (np.sqrt(v_hat) + self.epsilon)
+
+
+class AdamW(Adam):
+    """Adam con weight decay desacoplado (Loshchilov & Hutter, 2019)."""
+    def __init__(self, lr=0.005, rho1=0.9, rho2=0.999, epsilon=1e-8, wd=1e-4):
+        super().__init__(lr, rho1, rho2, epsilon)
+        self.wd = wd
+    def update(self, params, grads):
+        self.t += 1
+        for k in params:
+            self.m[k] = self.rho1 * self.m.get(k, 0.0) + (1 - self.rho1) * grads[k]
+            self.v[k] = self.rho2 * self.v.get(k, 0.0) + (1 - self.rho2) * grads[k] ** 2
+            m_hat = self.m[k] / (1 - self.rho1 ** self.t)
+            v_hat = self.v[k] / (1 - self.rho2 ** self.t)
+            params[k] -= self.lr * (m_hat / (np.sqrt(v_hat) + self.epsilon) + self.wd * params[k])
